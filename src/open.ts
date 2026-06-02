@@ -4,14 +4,10 @@
  * drag-and-drop. Uses Playwright, lazy-imported so the core CLI works without it.
  */
 import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { JaegerDoc } from "./convert.js";
-
-// A persistent profile so any SSO/login in front of the Jaeger UI is done once
-// and reused on later runs.
-const profileDir = join(homedir(), ".cache", "cheap-aws-jaeger", "browser");
 
 /**
  * Hand the browser off to a detached child process so the CLI can return the
@@ -44,12 +40,13 @@ export async function openInJaeger(uiBase: string, doc: JaegerDoc): Promise<void
 
   const base = uiBase.replace(/\/+$/, "");
   const searchUrl = `${base}/search`;
-  mkdirSync(profileDir, { recursive: true });
 
   console.error(`Launching browser at ${searchUrl} ...`);
-  let context;
+  // Ephemeral browser per run — no shared user-data-dir lock, so multiple
+  // `--open` windows can be open at once.
+  let browser;
   try {
-    context = await chromium.launchPersistentContext(profileDir, { headless: false });
+    browser = await chromium.launch({ headless: false });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/Executable doesn't exist|playwright install/i.test(msg)) {
@@ -58,7 +55,8 @@ export async function openInJaeger(uiBase: string, doc: JaegerDoc): Promise<void
     throw err;
   }
 
-  const page = context.pages()[0] ?? (await context.newPage());
+  const context = await browser.newContext();
+  const page = await context.newPage();
   await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
 
   // Reveal the dropzone (Jaeger's "Upload" tab), then hand the file to its input.
@@ -88,9 +86,9 @@ export async function openInJaeger(uiBase: string, doc: JaegerDoc): Promise<void
 
   console.error("Browser is open. Close the window or press Ctrl+C here to exit.");
   // Exit when the user closes the browser, so the holder process doesn't linger.
-  context.on("close", () => process.exit(0));
+  browser.on("disconnected", () => process.exit(0));
   process.on("SIGINT", () => {
-    void context.close().finally(() => process.exit(0));
+    void browser.close().finally(() => process.exit(0));
   });
   await new Promise<never>(() => {}); // keep the process (and window) alive
 }

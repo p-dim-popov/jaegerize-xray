@@ -54,8 +54,10 @@ provision the browser once:
 npx playwright install chromium
 ```
 
-The browser uses a persistent profile under `~/.cache/cheap-aws-jaeger/`, so any
-login in front of your Jaeger UI is done once.
+Each `--open` launches a fresh, isolated browser instance, so you can have
+several trace windows open at once. (A private Jaeger behind a login will
+therefore prompt each run — a `--user-data-dir` option to persist that is on the
+roadmap.)
 
 By default `--open` **detaches**: the browser is handed to a background process
 and your terminal is freed immediately. The window stays open until you close
