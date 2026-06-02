@@ -13,36 +13,53 @@
  */
 import { normalizeToXray, toJaegerDoc } from "./convert.js";
 import { makeClient, fetchTraces } from "./xray.js";
+import { openInJaeger } from "./open.js";
 
-const USAGE = `Usage: caj <traceId...> [--region <aws-region>]
+const DEFAULT_UI = "https://demo.jaegertracing.io/jaeger";
+
+const USAGE = `Usage: caj <traceId...> [--region <aws-region>] [--open] [--ui <jaeger-url>]
 
   traceId   One or more trace IDs (Jaeger 32-char hex or X-Ray 1-xxxx-yyyy).
   --region  AWS region (default: $AWS_REGION or us-east-1).
+  --open    Open the trace in a browser by dropping it into the Jaeger UI.
+  --ui      Base URL of the Jaeger UI (default: ${DEFAULT_UI}).
+            The upload is parsed client-side, so a hosted UI renders local
+            traces without sending them to its backend. Use your own, e.g.
+            http://localhost:16686.
 
-Emits Jaeger UI JSON on stdout. Example:
-  caj 0320dc04049a0152a82d546034008746 > trace.json`;
+Without --open, emits Jaeger UI JSON on stdout:
+  caj 0320dc04049a0152a82d546034008746 > trace.json
+
+With --open, launches a browser and loads the trace for you:
+  caj 0320dc04049a0152a82d546034008746 --open`;
 
 interface Args {
   help?: boolean;
   ids: string[];
   region?: string;
+  open?: boolean;
+  ui?: string;
 }
 
 function parseArgs(argv: string[]): Args {
   const ids: string[] = [];
   let region: string | undefined;
+  let open = false;
+  let ui = DEFAULT_UI;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "-h" || arg === "--help") return { help: true, ids: [] };
     else if (arg === "--region") region = argv[++i];
+    else if (arg === "--open") open = true;
+    else if (arg === "--ui") ui = argv[++i] ?? ui;
     else if (arg.startsWith("-")) throw new Error(`Unknown option: ${arg}`);
     else ids.push(arg);
   }
-  return { ids, region };
+  return { ids, region, open, ui };
 }
 
 async function main(): Promise<void> {
-  const { help, ids, region } = parseArgs(process.argv.slice(2));
+  const { help, ids, region, open, ui } = parseArgs(process.argv.slice(2));
   if (help) {
     console.log(USAGE);
     return;
@@ -61,7 +78,12 @@ async function main(): Promise<void> {
   if (!traces.length) console.error("No traces found for the given ID(s).");
   else console.error(`Fetched ${traces.length} trace(s).`);
 
-  process.stdout.write(JSON.stringify(toJaegerDoc(traces), null, 2) + "\n");
+  const doc = toJaegerDoc(traces);
+  if (open) {
+    await openInJaeger(ui ?? DEFAULT_UI, doc);
+  } else {
+    process.stdout.write(JSON.stringify(doc, null, 2) + "\n");
+  }
 }
 
 main().catch((err: unknown) => {

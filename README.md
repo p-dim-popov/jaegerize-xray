@@ -29,11 +29,42 @@ pipes stay clean:
 caj <id> | jq '.data[0].spans | length'
 ```
 
+### Open it in a browser automatically
+
+`--open` launches a browser, navigates to a Jaeger UI, and drops the converted
+trace into the upload dropzone for you — no manual drag-and-drop:
+
+```bash
+caj 0320dc04049a0152a82d546034008746 --open
+```
+
+The default UI is the public Jaeger demo
+(`https://demo.jaegertracing.io/jaeger`). Jaeger parses the upload **entirely
+client-side**, so the hosted demo just renders your local trace — the trace data
+is never sent to its backend. Point `--ui` at your own instance to override:
+
+```bash
+caj <id> --open --ui http://localhost:16686
+```
+
+`--open` uses [Playwright](https://playwright.dev). After installing the package,
+provision the browser once:
+
+```bash
+npx playwright install chromium
+```
+
+The browser uses a persistent profile under `~/.cache/cheap-aws-jaeger/`, so any
+login in front of your Jaeger UI is done once. The window stays open until you
+press Ctrl+C.
+
 ### Options
 
 | Flag | Meaning |
 |------|---------|
 | `--region <r>` | AWS region (default: `$AWS_REGION` or `us-east-1`) |
+| `--open` | Open the trace in a browser via the Jaeger UI upload dropzone |
+| `--ui <url>` | Jaeger UI base URL (default: `https://demo.jaegertracing.io/jaeger`) |
 | `-h`, `--help` | Usage |
 
 Credentials/region resolve through the standard AWS chain (env vars, `~/.aws`,
@@ -63,4 +94,5 @@ bun run build       # tsc -> dist/ (also runs on `npm publish` via prepublishOnl
 
 ## Roadmap
 
-- `--open` to auto-launch a local Jaeger UI and open the trace in the browser.
+- Spin up a local Jaeger all-in-one automatically and default `--open` to it,
+  so traces that exist only in X-Ray render without any external UI.

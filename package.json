@@ -29,7 +29,8 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@aws-sdk/client-xray": "^3.0.0"
+    "@aws-sdk/client-xray": "^3.0.0",
+    "playwright": "^1.60.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
