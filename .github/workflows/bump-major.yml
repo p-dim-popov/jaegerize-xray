@@ -1,0 +1,57 @@
+name: Bump major
+
+# Manual: bump the major version (resetting minor to 0), push the tag, and
+# release it. Subsequent pushes to main then bump the minor within this major.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tagging
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute next major tag
+        id: bump
+        run: |
+          latest=$(git tag -l 'v*' | sort -V | tail -n1)
+          if [ -n "$latest" ]; then
+            base=${latest#v}
+          else
+            base=$(node -p "require('./package.json').version")
+          fi
+          major=${base%%.*}
+          tag="v$((major + 1)).0.0"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Next tag: $tag"
+
+      - name: Create and push tag
+        env:
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "$TAG"
+
+  release:
+    needs: tag
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+    secrets: inherit
+    permissions:
+      contents: write
+      id-token: write

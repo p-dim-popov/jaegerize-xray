@@ -27,7 +27,19 @@
     "tracing",
     "opentelemetry"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/p-dim-popov/jaegerize-xray.git"
+  },
+  "homepage": "https://github.com/p-dim-popov/jaegerize-xray#readme",
+  "bugs": {
+    "url": "https://github.com/p-dim-popov/jaegerize-xray/issues"
+  },
+  "author": "Petar Popov",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@aws-sdk/client-xray": "^3.0.0"
   },

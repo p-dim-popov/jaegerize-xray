@@ -1,0 +1,66 @@
+name: Tag minor
+
+# Every push to main: run tests, bump the minor version, push a tag, and
+# release it. The tag is pushed with GITHUB_TOKEN (which can't trigger another
+# workflow), so we invoke the release workflow directly via `uses`.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tagging
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run build
+
+      - name: Compute next minor tag
+        id: bump
+        run: |
+          latest=$(git tag -l 'v*' | sort -V | tail -n1)
+          if [ -n "$latest" ]; then
+            base=${latest#v}
+          else
+            base=$(node -p "require('./package.json').version")
+          fi
+          major=${base%%.*}
+          rest=${base#*.}
+          minor=${rest%%.*}
+          tag="v${major}.$((minor + 1)).0"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Next tag: $tag"
+
+      - name: Create and push tag
+        env:
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "$TAG"
+
+  release:
+    needs: tag
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+    secrets: inherit
+    permissions:
+      contents: write
+      id-token: write
