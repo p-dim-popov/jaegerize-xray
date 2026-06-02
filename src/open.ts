@@ -1,56 +1,130 @@
 /**
- * `--open` orchestration: launch a browser, navigate to a Jaeger UI, and drop
- * the converted trace JSON straight into the Upload dropzone — no manual
- * drag-and-drop. Uses Playwright, lazy-imported so the core CLI works without it.
+ * `--open` orchestration. One persistent browser is run as a background daemon;
+ * every `jxr --open` connects to it over CDP and opens the trace in a new tab,
+ * so repeated runs reuse a single browser window instead of spawning a fresh
+ * app each time. Closing that browser quits everything. Playwright is
+ * lazy-imported so the core CLI works without it.
  */
 import { spawn } from "node:child_process";
-import { openSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, openSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { JaegerDoc } from "./convert.js";
 
-/**
- * Hand the browser off to a detached child process so the CLI can return the
- * terminal immediately. A Playwright browser is killed when its owning process
- * exits, so the child (not us) must own it. The child re-enters this CLI via
- * the internal --__from-file flag and runs openInJaeger() attached, keeping the
- * window alive until the user closes it.
- */
-export function spawnDetachedOpener(uiBase: string, doc: JaegerDoc): string {
-  const tag = `jxr-open-${process.pid}-${doc.data[0]?.traceID ?? "x"}`;
-  const handoff = join(tmpdir(), `${tag}.json`);
-  const logPath = join(tmpdir(), `${tag}.log`);
-  writeFileSync(handoff, JSON.stringify(doc));
-  const log = openSync(logPath, "a");
-  const child = spawn(
-    process.execPath,
-    [process.argv[1]!, "--__from-file", handoff, "--ui", uiBase],
-    { detached: true, stdio: ["ignore", log, log] } // capture child output for debugging
-  );
-  child.unref();
-  return logPath;
-}
+// The daemon re-enters the CLI; resolve it relative to this module so it works
+// regardless of how/where open.js was imported from.
+const cliEntry = fileURLToPath(new URL("./cli.js", import.meta.url));
 
-export async function openInJaeger(uiBase: string, doc: JaegerDoc): Promise<void> {
-  let chromium: typeof import("playwright").chromium;
+const stateDir = join(homedir(), ".cache", "jaegerize-xray");
+const userDataDir = join(stateDir, "profile");
+const endpointFile = join(stateDir, "cdp-endpoint");
+const pidFile = join(stateDir, "daemon.pid");
+const lockDir = join(stateDir, "daemon.lock");
+const daemonLog = join(stateDir, "daemon.log");
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+type Chromium = typeof import("playwright").chromium;
+
+async function loadChromium(): Promise<Chromium> {
   try {
-    ({ chromium } = await import("playwright"));
+    const { chromium } = await import("playwright");
+    return chromium;
   } catch {
     throw new Error(
       "--open needs Playwright. Install it:\n" +
         "  npm i -g playwright && npx playwright install chromium"
     );
   }
+}
 
-  const base = uiBase.replace(/\/+$/, "");
-  const searchUrl = `${base}/search`;
-
-  console.error(`Launching browser at ${searchUrl} ...`);
-  // Ephemeral browser per run — no shared user-data-dir lock, so multiple
-  // `--open` windows can be open at once.
-  let browser;
+function readEndpoint(): string | null {
   try {
-    browser = await chromium.launch({ headless: process.env.CAJ_HEADLESS === "1" });
+    const ep = readFileSync(endpointFile, "utf8").trim();
+    return ep || null;
+  } catch {
+    return null;
+  }
+}
+
+async function connectable(chromium: Chromium, endpoint: string): Promise<boolean> {
+  try {
+    const b = await chromium.connectOverCDP(endpoint, { timeout: 2000 });
+    await b.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Spawn the detached browser daemon (this CLI re-entered with --__daemon). */
+function spawnDaemon(): void {
+  mkdirSync(stateDir, { recursive: true });
+  const log = openSync(daemonLog, "a");
+  const child = spawn(process.execPath, [cliEntry, "--__daemon"], {
+    detached: true,
+    stdio: ["ignore", log, log],
+    env: process.env,
+  });
+  child.unref();
+}
+
+/** Return a live CDP endpoint, starting the daemon if needed. */
+async function ensureEndpoint(chromium: Chromium): Promise<string> {
+  const existing = readEndpoint();
+  if (existing && (await connectable(chromium, existing))) return existing;
+
+  mkdirSync(stateDir, { recursive: true });
+  let holdsLock = false;
+  try {
+    mkdirSync(lockDir); // atomic: throws if another run is already starting one
+    holdsLock = true;
+  } catch {
+    /* someone else is starting the daemon — just wait for it below */
+  }
+  if (holdsLock) {
+    try {
+      unlinkSync(endpointFile); // drop any stale endpoint
+    } catch {
+      /* none */
+    }
+    spawnDaemon();
+  }
+
+  try {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const ep = readEndpoint();
+      if (ep && (await connectable(chromium, ep))) return ep;
+      await sleep(400);
+    }
+    throw new Error(`Timed out starting the browser daemon. See log: ${daemonLog}`);
+  } finally {
+    if (holdsLock) {
+      try {
+        rmSync(lockDir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    }
+  }
+}
+
+/**
+ * Daemon entrypoint (--__daemon): own a persistent browser exposing a CDP port,
+ * publish its endpoint, and stay alive until the browser is closed.
+ */
+export async function runDaemon(): Promise<void> {
+  const chromium = await loadChromium();
+  mkdirSync(stateDir, { recursive: true });
+
+  let context;
+  try {
+    context = await chromium.launchPersistentContext(userDataDir, {
+      headless: process.env.JXR_HEADLESS === "1",
+      args: ["--remote-debugging-port=0"],
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/Executable doesn't exist|playwright install/i.test(msg)) {
@@ -59,11 +133,58 @@ export async function openInJaeger(uiBase: string, doc: JaegerDoc): Promise<void
     throw err;
   }
 
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
+  // Chrome writes the chosen port to DevToolsActivePort shortly after launch.
+  const portFile = join(userDataDir, "DevToolsActivePort");
+  let port = "";
+  for (let i = 0; i < 30 && !port; i++) {
+    try {
+      port = readFileSync(portFile, "utf8").split("\n")[0]!.trim();
+    } catch {
+      await sleep(100);
+    }
+  }
+  if (!port) throw new Error("Could not read the browser's debugging port.");
+  writeFileSync(endpointFile, `http://127.0.0.1:${port}`);
+  writeFileSync(pidFile, String(process.pid));
+  try {
+    rmSync(lockDir, { recursive: true, force: true });
+  } catch {
+    /* best effort */
+  }
 
-  // Reveal the dropzone (Jaeger's "Upload" tab), then hand the file to its input.
+  const shutdown = () => {
+    for (const f of [endpointFile, pidFile]) {
+      try {
+        unlinkSync(f);
+      } catch {
+        /* none */
+      }
+    }
+    process.exit(0);
+  };
+  context.on("close", shutdown); // user closed the browser
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+  await new Promise<never>(() => {}); // stay alive holding the browser
+}
+
+/** Connect to the shared browser and open the trace in a new tab. */
+export async function openInJaeger(
+  uiBase: string,
+  doc: JaegerDoc,
+  opts: { detach: boolean } = { detach: true }
+): Promise<void> {
+  const chromium = await loadChromium();
+  const endpoint = await ensureEndpoint(chromium);
+  const base = uiBase.replace(/\/+$/, "");
+
+  const browser = await chromium.connectOverCDP(endpoint);
+  const context = browser.contexts()[0] ?? (await browser.newContext());
+  // Reuse the daemon's initial blank tab if it's still around, else open one.
+  const blank = context.pages().find((p) => p.url() === "about:blank");
+  const page = blank ?? (await context.newPage());
+
+  await page.goto(`${base}/search`, { waitUntil: "domcontentloaded" });
   await page.getByRole("tab", { name: "Upload" }).click();
   const input = page.locator('input[type="file"]');
   await input.waitFor({ state: "attached" });
@@ -72,11 +193,8 @@ export async function openInJaeger(uiBase: string, doc: JaegerDoc): Promise<void
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(doc)),
   });
-  console.error(`Loaded ${doc.data.length} trace(s) into the Jaeger UI.`);
 
-  // If there's exactly one trace, jump straight to its view. Target the exact
-  // id (the results list also has a "/trace/..." placeholder link) and match on
-  // href suffix so it works under a base path (e.g. /jaeger/trace/<id>).
+  // Single trace → jump straight to its view (skip the "/trace/..." placeholder).
   const firstId = doc.data[0]?.traceID;
   if (doc.data.length === 1 && firstId) {
     try {
@@ -84,15 +202,47 @@ export async function openInJaeger(uiBase: string, doc: JaegerDoc): Promise<void
       await link.waitFor({ state: "visible", timeout: 6000 });
       await link.click();
     } catch {
-      // Couldn't auto-open — leave the user on the results list.
+      /* leave on the results list */
     }
   }
+  await page.bringToFront();
+  console.error(`Loaded ${doc.data.length} trace(s) into the Jaeger UI.`);
 
-  console.error("Browser is open. Close the window or press Ctrl+C here to exit.");
-  // Exit when the user closes the browser, so the holder process doesn't linger.
-  browser.on("disconnected", () => process.exit(0));
-  process.on("SIGINT", () => {
-    void browser.close().finally(() => process.exit(0));
+  if (opts.detach) {
+    await browser.close(); // disconnect; the tab stays open in the shared browser
+    return;
+  }
+  console.error("Attached: close the trace tab (or press Ctrl+C) to exit.");
+  await new Promise<void>((resolve) => {
+    page.on("close", () => resolve());
+    process.on("SIGINT", () => resolve());
   });
-  await new Promise<never>(() => {}); // keep the process (and window) alive
+  await browser.close();
+}
+
+/** Stop the shared browser by signalling the daemon that owns it. */
+export async function stopBrowser(): Promise<boolean> {
+  let pid = 0;
+  try {
+    pid = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+  } catch {
+    /* no pidfile */
+  }
+  let killed = false;
+  if (pid > 0) {
+    try {
+      process.kill(pid, "SIGTERM"); // daemon's handler closes the browser and exits
+      killed = true;
+    } catch {
+      /* already gone */
+    }
+  }
+  for (const f of [endpointFile, pidFile]) {
+    try {
+      unlinkSync(f);
+    } catch {
+      /* none */
+    }
+  }
+  return killed;
 }

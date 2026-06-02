@@ -11,11 +11,9 @@
  * (env vars, ~/.aws, SSO, instance role). Override region with --region or
  * AWS_REGION. Progress goes to stderr so stdout stays clean JSON.
  */
-import { readFileSync, unlinkSync } from "node:fs";
 import { normalizeToXray, toJaegerDoc } from "./convert.js";
-import type { JaegerDoc } from "./convert.js";
 import { makeClient, fetchTraces } from "./xray.js";
-import { openInJaeger, spawnDetachedOpener } from "./open.js";
+import { openInJaeger, runDaemon, stopBrowser } from "./open.js";
 
 const DEFAULT_UI = "https://demo.jaegertracing.io/jaeger";
 
@@ -28,9 +26,13 @@ const USAGE = `Usage: jxr <traceId...> [--region <aws-region>] [--open] [--ui <j
             The upload is parsed client-side, so a hosted UI renders local
             traces without sending them to its backend. Use your own, e.g.
             http://localhost:16686.
-  --detach  With --open, hand the browser to a background process and return
-            the terminal (default: true). Pass --detach false to stay attached
-            and block until you close the window or press Ctrl+C.
+  --detach  With --open, return the terminal immediately (default: true).
+            Pass --detach false to block until you close the trace tab or
+            press Ctrl+C.
+  --stop    Close the shared browser and exit.
+
+Repeated --open runs reuse one background browser, opening each trace in a new
+tab. Close that browser (or run "jxr --stop") to quit it.
 
 Without --open, emits Jaeger UI JSON on stdout:
   jxr 0320dc04049a0152a82d546034008746 > trace.json
@@ -45,7 +47,8 @@ interface Args {
   open?: boolean;
   ui?: string;
   detach: boolean;
-  fromFile?: string;
+  stop?: boolean;
+  daemon?: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -54,7 +57,8 @@ function parseArgs(argv: string[]): Args {
   let open = false;
   let ui = DEFAULT_UI;
   let detach = true;
-  let fromFile: string | undefined;
+  let stop = false;
+  let daemon = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "-h" || arg === "--help") return { help: true, ids: [], detach };
@@ -67,30 +71,30 @@ function parseArgs(argv: string[]): Args {
         detach = next === "true";
         i++;
       } else detach = true;
-    } else if (arg === "--__from-file") fromFile = argv[++i];
+    } else if (arg === "--stop") stop = true;
+    else if (arg === "--__daemon") daemon = true;
     else if (arg.startsWith("-")) throw new Error(`Unknown option: ${arg}`);
     else ids.push(arg);
   }
-  return { ids, region, open, ui, detach, fromFile };
+  return { ids, region, open, ui, detach, stop, daemon };
 }
 
 async function main(): Promise<void> {
-  const { help, ids, region, open, ui, detach, fromFile } = parseArgs(process.argv.slice(2));
+  const { help, ids, region, open, ui, detach, stop, daemon } = parseArgs(process.argv.slice(2));
   if (help) {
     console.log(USAGE);
     return;
   }
 
-  // Internal: the detached opener child re-enters here with a handoff file
-  // holding an already-converted doc — load it into the browser and stay attached.
-  if (fromFile) {
-    const doc = JSON.parse(readFileSync(fromFile, "utf8")) as JaegerDoc;
-    try {
-      unlinkSync(fromFile);
-    } catch {
-      /* best effort */
-    }
-    await openInJaeger(ui ?? DEFAULT_UI, doc);
+  // Internal: run the persistent browser daemon.
+  if (daemon) {
+    await runDaemon();
+    return;
+  }
+
+  if (stop) {
+    const wasRunning = await stopBrowser();
+    console.error(wasRunning ? "Closed the shared browser." : "No shared browser was running.");
     return;
   }
 
@@ -114,12 +118,7 @@ async function main(): Promise<void> {
       console.error("Nothing to open: no traces were returned. Check the ID, --region, and AWS credentials.");
       process.exit(1);
     }
-    if (detach) {
-      const logPath = spawnDetachedOpener(ui ?? DEFAULT_UI, doc);
-      console.error(`Opening the trace in a detached browser; this terminal is free. (log: ${logPath})`);
-    } else {
-      await openInJaeger(ui ?? DEFAULT_UI, doc);
-    }
+    await openInJaeger(ui ?? DEFAULT_UI, doc, { detach });
   } else {
     process.stdout.write(JSON.stringify(doc, null, 2) + "\n");
   }

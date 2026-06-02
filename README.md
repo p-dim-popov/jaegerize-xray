@@ -54,15 +54,19 @@ provision the browser once:
 npx playwright install chromium
 ```
 
-Each `--open` launches a fresh, isolated browser instance, so you can have
-several trace windows open at once. (A private Jaeger behind a login will
-therefore prompt each run — a `--user-data-dir` option to persist that is on the
-roadmap.)
+Repeated `--open` runs **reuse one browser**: a single persistent instance runs
+in the background and each trace opens in a new tab, rather than spawning a new
+browser app every time. It uses a persistent profile, so a login in front of a
+private Jaeger is done once. Quit it by closing the browser window (or
+`jxr --stop`):
 
-By default `--open` **detaches**: the browser is handed to a background process
-and your terminal is freed immediately. The window stays open until you close
-it. To instead stay attached (block until you close the window or press
-Ctrl+C), pass `--detach false`:
+```bash
+jxr --stop
+```
+
+By default `--open` **detaches** and frees your terminal immediately; the tab
+stays open. Pass `--detach false` to stay attached and block until you close the
+trace tab or press Ctrl+C:
 
 ```bash
 jxr <id> --open --detach false
@@ -75,7 +79,8 @@ jxr <id> --open --detach false
 | `--region <r>` | AWS region (default: `$AWS_REGION` or `us-east-1`) |
 | `--open` | Open the trace in a browser via the Jaeger UI upload dropzone |
 | `--ui <url>` | Jaeger UI base URL (default: `https://demo.jaegertracing.io/jaeger`) |
-| `--detach [true\|false]` | With `--open`, detach the browser and free the terminal (default: `true`) |
+| `--detach [true\|false]` | With `--open`, free the terminal immediately (default: `true`) |
+| `--stop` | Close the shared browser |
 | `-h`, `--help` | Usage |
 
 Credentials/region resolve through the standard AWS chain (env vars, `~/.aws`,
