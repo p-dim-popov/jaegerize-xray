@@ -20,7 +20,8 @@ const DEFAULT_UI = "https://demo.jaegertracing.io/jaeger";
 const USAGE = `Usage: jxr <traceId...> [--region <aws-region>] [--open] [--ui <jaeger-url>]
 
   traceId   One or more trace IDs (Jaeger 32-char hex or X-Ray 1-xxxx-yyyy).
-  --region  AWS region (default: $AWS_REGION or us-east-1).
+  --region  AWS region. Defaults to the standard AWS chain: AWS_REGION /
+            AWS_DEFAULT_REGION, then your active profile's region in ~/.aws/config.
   --open    Open the trace in a browser by dropping it into the Jaeger UI.
   --ui      Base URL of the Jaeger UI (default: ${DEFAULT_UI}).
             The upload is parsed client-side, so a hosted UI renders local

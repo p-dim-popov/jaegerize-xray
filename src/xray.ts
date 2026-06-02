@@ -8,7 +8,10 @@ const chunk = <T>(arr: T[], n: number): T[][] =>
   Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
 
 export function makeClient(region?: string): XRayClient {
-  return new XRayClient({ region: region || process.env.AWS_REGION || "us-east-1" });
+  // When --region isn't passed, let the AWS SDK resolve it from the standard
+  // chain: AWS_REGION / AWS_DEFAULT_REGION, then the active profile's region in
+  // ~/.aws/config. Forcing a fallback here would bypass that profile lookup.
+  return new XRayClient(region ? { region } : {});
 }
 
 // traceIds must be in X-Ray form (1-xxxxxxxx-yyyy...). Returns raw X-Ray traces.

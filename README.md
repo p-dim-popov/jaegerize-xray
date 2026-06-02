@@ -76,7 +76,7 @@ jxr <id> --open --detach false
 
 | Flag | Meaning |
 |------|---------|
-| `--region <r>` | AWS region (default: `$AWS_REGION` or `us-east-1`) |
+| `--region <r>` | AWS region (default: `$AWS_REGION`, else your `~/.aws/config` profile region) |
 | `--open` | Open the trace in a browser via the Jaeger UI upload dropzone |
 | `--ui <url>` | Jaeger UI base URL (default: `https://demo.jaegertracing.io/jaeger`) |
 | `--detach [true\|false]` | With `--open`, free the terminal immediately (default: `true`) |
