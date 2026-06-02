@@ -1,10 +1,10 @@
 {
-  "name": "cheap-aws-jaeger",
+  "name": "jaegerize-xray",
   "version": "0.1.0",
   "description": "Fetch AWS X-Ray traces by ID and emit Jaeger UI JSON. Accepts Jaeger-format trace IDs straight from the Jaeger UI.",
   "type": "module",
   "bin": {
-    "caj": "dist/cli.js"
+    "jxr": "dist/cli.js"
   },
   "files": [
     "dist"

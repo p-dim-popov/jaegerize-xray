@@ -17,7 +17,7 @@ import type { JaegerDoc } from "./convert.js";
  * window alive until the user closes it.
  */
 export function spawnDetachedOpener(uiBase: string, doc: JaegerDoc): string {
-  const tag = `caj-open-${process.pid}-${doc.data[0]?.traceID ?? "x"}`;
+  const tag = `jxr-open-${process.pid}-${doc.data[0]?.traceID ?? "x"}`;
   const handoff = join(tmpdir(), `${tag}.json`);
   const logPath = join(tmpdir(), `${tag}.log`);
   writeFileSync(handoff, JSON.stringify(doc));

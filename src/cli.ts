@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * caj — fetch AWS X-Ray traces by ID and emit Jaeger UI JSON on stdout.
+ * jxr — fetch AWS X-Ray traces by ID and emit Jaeger UI JSON on stdout.
  *
- *   caj 0320dc04049a0152a82d546034008746
- *   caj 1-58406520-a006649127e371903a2de979 0320dc04049a0152a82d546034008746
- *   caj <id> > trace.json        # then load via Jaeger UI > Search > JSON File
+ *   jxr 0320dc04049a0152a82d546034008746
+ *   jxr 1-58406520-a006649127e371903a2de979 0320dc04049a0152a82d546034008746
+ *   jxr <id> > trace.json        # then load via Jaeger UI > Search > JSON File
  *
  * Trace IDs may be Jaeger 32-char hex (as shown in the Jaeger UI) or native
  * X-Ray form; both are accepted. Auth/region come from the standard AWS chain
@@ -19,7 +19,7 @@ import { openInJaeger, spawnDetachedOpener } from "./open.js";
 
 const DEFAULT_UI = "https://demo.jaegertracing.io/jaeger";
 
-const USAGE = `Usage: caj <traceId...> [--region <aws-region>] [--open] [--ui <jaeger-url>]
+const USAGE = `Usage: jxr <traceId...> [--region <aws-region>] [--open] [--ui <jaeger-url>]
 
   traceId   One or more trace IDs (Jaeger 32-char hex or X-Ray 1-xxxx-yyyy).
   --region  AWS region (default: $AWS_REGION or us-east-1).
@@ -33,10 +33,10 @@ const USAGE = `Usage: caj <traceId...> [--region <aws-region>] [--open] [--ui <j
             and block until you close the window or press Ctrl+C.
 
 Without --open, emits Jaeger UI JSON on stdout:
-  caj 0320dc04049a0152a82d546034008746 > trace.json
+  jxr 0320dc04049a0152a82d546034008746 > trace.json
 
 With --open, launches a browser and loads the trace for you:
-  caj 0320dc04049a0152a82d546034008746 --open`;
+  jxr 0320dc04049a0152a82d546034008746 --open`;
 
 interface Args {
   help?: boolean;

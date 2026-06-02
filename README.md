@@ -1,4 +1,4 @@
-# cheap-aws-jaeger (`caj`)
+# jaegerize-xray (`jxr`)
 
 Pull a trace out of **AWS X-Ray** by ID and print it as **Jaeger UI JSON** on stdout.
 Trace IDs can be copied straight from the Jaeger UI (32-char hex) or given in
@@ -7,17 +7,17 @@ native X-Ray form — both are accepted.
 ## Install
 
 ```bash
-npm i -g cheap-aws-jaeger
+npm i -g jaegerize-xray
 ```
 
 ## Use
 
 ```bash
 # Jaeger-format ID (e.g. from a jaeger.../traces/<id> URL)
-caj 0320dc04049a0152a82d546034008746 > trace.json
+jxr 0320dc04049a0152a82d546034008746 > trace.json
 
 # Native X-Ray ID, or several at once
-caj 1-58406520-a006649127e371903a2de979 0320dc04049a0152a82d546034008746 > traces.json
+jxr 1-58406520-a006649127e371903a2de979 0320dc04049a0152a82d546034008746 > traces.json
 ```
 
 Then load the file via **Jaeger UI → Search → "JSON File"**.
@@ -26,7 +26,7 @@ JSON goes to **stdout**; progress messages go to **stderr**, so redirects and
 pipes stay clean:
 
 ```bash
-caj <id> | jq '.data[0].spans | length'
+jxr <id> | jq '.data[0].spans | length'
 ```
 
 ### Open it in a browser automatically
@@ -35,7 +35,7 @@ caj <id> | jq '.data[0].spans | length'
 trace into the upload dropzone for you — no manual drag-and-drop:
 
 ```bash
-caj 0320dc04049a0152a82d546034008746 --open
+jxr 0320dc04049a0152a82d546034008746 --open
 ```
 
 The default UI is the public Jaeger demo
@@ -44,7 +44,7 @@ client-side**, so the hosted demo just renders your local trace — the trace da
 is never sent to its backend. Point `--ui` at your own instance to override:
 
 ```bash
-caj <id> --open --ui http://localhost:16686
+jxr <id> --open --ui http://localhost:16686
 ```
 
 `--open` uses [Playwright](https://playwright.dev). After installing the package,
@@ -65,7 +65,7 @@ it. To instead stay attached (block until you close the window or press
 Ctrl+C), pass `--detach false`:
 
 ```bash
-caj <id> --open --detach false
+jxr <id> --open --detach false
 ```
 
 ### Options
@@ -79,12 +79,12 @@ caj <id> --open --detach false
 | `-h`, `--help` | Usage |
 
 Credentials/region resolve through the standard AWS chain (env vars, `~/.aws`,
-SSO, instance role) — if `aws xray ...` works for you, so does `caj`.
+SSO, instance role) — if `aws xray ...` works for you, so does `jxr`.
 
 ## How the ID conversion works
 
 X-Ray IDs aren't W3C/Jaeger IDs: `1-58406520-a006...` is `version-epoch-random`.
-`caj` strips/reinserts the dashes to move between the two 32-hex-char and
+`jxr` strips/reinserts the dashes to move between the two 32-hex-char and
 `1-xxxxxxxx-yyyy...` forms, fetches segments via `BatchGetTraces` (auto-chunked
 to the 5-IDs-per-call limit), flattens nested subsegments into linked
 `CHILD_OF` spans, converts epoch-seconds to microseconds, and maps HTTP +
