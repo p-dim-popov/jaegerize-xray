@@ -4,7 +4,7 @@
  * drag-and-drop. Uses Playwright, lazy-imported so the core CLI works without it.
  */
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { openSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { JaegerDoc } from "./convert.js";
@@ -16,15 +16,19 @@ import type { JaegerDoc } from "./convert.js";
  * the internal --__from-file flag and runs openInJaeger() attached, keeping the
  * window alive until the user closes it.
  */
-export function spawnDetachedOpener(uiBase: string, doc: JaegerDoc): void {
-  const handoff = join(tmpdir(), `caj-open-${process.pid}-${doc.data[0]?.traceID ?? "x"}.json`);
+export function spawnDetachedOpener(uiBase: string, doc: JaegerDoc): string {
+  const tag = `caj-open-${process.pid}-${doc.data[0]?.traceID ?? "x"}`;
+  const handoff = join(tmpdir(), `${tag}.json`);
+  const logPath = join(tmpdir(), `${tag}.log`);
   writeFileSync(handoff, JSON.stringify(doc));
+  const log = openSync(logPath, "a");
   const child = spawn(
     process.execPath,
     [process.argv[1]!, "--__from-file", handoff, "--ui", uiBase],
-    { detached: true, stdio: "ignore" }
+    { detached: true, stdio: ["ignore", log, log] } // capture child output for debugging
   );
   child.unref();
+  return logPath;
 }
 
 export async function openInJaeger(uiBase: string, doc: JaegerDoc): Promise<void> {
@@ -46,7 +50,7 @@ export async function openInJaeger(uiBase: string, doc: JaegerDoc): Promise<void
   // `--open` windows can be open at once.
   let browser;
   try {
-    browser = await chromium.launch({ headless: false });
+    browser = await chromium.launch({ headless: process.env.CAJ_HEADLESS === "1" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/Executable doesn't exist|playwright install/i.test(msg)) {

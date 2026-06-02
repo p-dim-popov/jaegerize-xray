@@ -110,9 +110,13 @@ async function main(): Promise<void> {
 
   const doc = toJaegerDoc(traces);
   if (open) {
+    if (!doc.data.length) {
+      console.error("Nothing to open: no traces were returned. Check the ID, --region, and AWS credentials.");
+      process.exit(1);
+    }
     if (detach) {
-      spawnDetachedOpener(ui ?? DEFAULT_UI, doc);
-      console.error("Opened the trace in a detached browser; this terminal is free.");
+      const logPath = spawnDetachedOpener(ui ?? DEFAULT_UI, doc);
+      console.error(`Opening the trace in a detached browser; this terminal is free. (log: ${logPath})`);
     } else {
       await openInJaeger(ui ?? DEFAULT_UI, doc);
     }
