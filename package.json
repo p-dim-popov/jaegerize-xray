@@ -1,0 +1,39 @@
+{
+  "name": "cheap-aws-jaeger",
+  "version": "0.1.0",
+  "description": "Fetch AWS X-Ray traces by ID and emit Jaeger UI JSON. Accepts Jaeger-format trace IDs straight from the Jaeger UI.",
+  "type": "module",
+  "bin": {
+    "caj": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "bun run src/cli.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "prepublishOnly": "bun run build"
+  },
+  "keywords": [
+    "aws",
+    "x-ray",
+    "xray",
+    "jaeger",
+    "tracing",
+    "opentelemetry"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-xray": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
