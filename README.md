@@ -55,8 +55,16 @@ npx playwright install chromium
 ```
 
 The browser uses a persistent profile under `~/.cache/cheap-aws-jaeger/`, so any
-login in front of your Jaeger UI is done once. The window stays open until you
-press Ctrl+C.
+login in front of your Jaeger UI is done once.
+
+By default `--open` **detaches**: the browser is handed to a background process
+and your terminal is freed immediately. The window stays open until you close
+it. To instead stay attached (block until you close the window or press
+Ctrl+C), pass `--detach false`:
+
+```bash
+caj <id> --open --detach false
+```
 
 ### Options
 
@@ -65,6 +73,7 @@ press Ctrl+C.
 | `--region <r>` | AWS region (default: `$AWS_REGION` or `us-east-1`) |
 | `--open` | Open the trace in a browser via the Jaeger UI upload dropzone |
 | `--ui <url>` | Jaeger UI base URL (default: `https://demo.jaegertracing.io/jaeger`) |
+| `--detach [true\|false]` | With `--open`, detach the browser and free the terminal (default: `true`) |
 | `-h`, `--help` | Usage |
 
 Credentials/region resolve through the standard AWS chain (env vars, `~/.aws`,

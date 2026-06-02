@@ -3,14 +3,33 @@
  * the converted trace JSON straight into the Upload dropzone — no manual
  * drag-and-drop. Uses Playwright, lazy-imported so the core CLI works without it.
  */
-import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { spawn } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { JaegerDoc } from "./convert.js";
 
 // A persistent profile so any SSO/login in front of the Jaeger UI is done once
 // and reused on later runs.
 const profileDir = join(homedir(), ".cache", "cheap-aws-jaeger", "browser");
+
+/**
+ * Hand the browser off to a detached child process so the CLI can return the
+ * terminal immediately. A Playwright browser is killed when its owning process
+ * exits, so the child (not us) must own it. The child re-enters this CLI via
+ * the internal --__from-file flag and runs openInJaeger() attached, keeping the
+ * window alive until the user closes it.
+ */
+export function spawnDetachedOpener(uiBase: string, doc: JaegerDoc): void {
+  const handoff = join(tmpdir(), `caj-open-${process.pid}-${doc.data[0]?.traceID ?? "x"}.json`);
+  writeFileSync(handoff, JSON.stringify(doc));
+  const child = spawn(
+    process.execPath,
+    [process.argv[1]!, "--__from-file", handoff, "--ui", uiBase],
+    { detached: true, stdio: "ignore" }
+  );
+  child.unref();
+}
 
 export async function openInJaeger(uiBase: string, doc: JaegerDoc): Promise<void> {
   let chromium: typeof import("playwright").chromium;
@@ -67,7 +86,9 @@ export async function openInJaeger(uiBase: string, doc: JaegerDoc): Promise<void
     }
   }
 
-  console.error("Browser is open. Press Ctrl+C here to close it.");
+  console.error("Browser is open. Close the window or press Ctrl+C here to exit.");
+  // Exit when the user closes the browser, so the holder process doesn't linger.
+  context.on("close", () => process.exit(0));
   process.on("SIGINT", () => {
     void context.close().finally(() => process.exit(0));
   });

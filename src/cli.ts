@@ -11,9 +11,11 @@
  * (env vars, ~/.aws, SSO, instance role). Override region with --region or
  * AWS_REGION. Progress goes to stderr so stdout stays clean JSON.
  */
+import { readFileSync, unlinkSync } from "node:fs";
 import { normalizeToXray, toJaegerDoc } from "./convert.js";
+import type { JaegerDoc } from "./convert.js";
 import { makeClient, fetchTraces } from "./xray.js";
-import { openInJaeger } from "./open.js";
+import { openInJaeger, spawnDetachedOpener } from "./open.js";
 
 const DEFAULT_UI = "https://demo.jaegertracing.io/jaeger";
 
@@ -26,6 +28,9 @@ const USAGE = `Usage: caj <traceId...> [--region <aws-region>] [--open] [--ui <j
             The upload is parsed client-side, so a hosted UI renders local
             traces without sending them to its backend. Use your own, e.g.
             http://localhost:16686.
+  --detach  With --open, hand the browser to a background process and return
+            the terminal (default: true). Pass --detach false to stay attached
+            and block until you close the window or press Ctrl+C.
 
 Without --open, emits Jaeger UI JSON on stdout:
   caj 0320dc04049a0152a82d546034008746 > trace.json
@@ -39,6 +44,8 @@ interface Args {
   region?: string;
   open?: boolean;
   ui?: string;
+  detach: boolean;
+  fromFile?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -46,24 +53,47 @@ function parseArgs(argv: string[]): Args {
   let region: string | undefined;
   let open = false;
   let ui = DEFAULT_UI;
+  let detach = true;
+  let fromFile: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
-    if (arg === "-h" || arg === "--help") return { help: true, ids: [] };
+    if (arg === "-h" || arg === "--help") return { help: true, ids: [], detach };
     else if (arg === "--region") region = argv[++i];
     else if (arg === "--open") open = true;
     else if (arg === "--ui") ui = argv[++i] ?? ui;
+    else if (arg === "--detach") {
+      const next = argv[i + 1];
+      if (next === "true" || next === "false") {
+        detach = next === "true";
+        i++;
+      } else detach = true;
+    } else if (arg === "--__from-file") fromFile = argv[++i];
     else if (arg.startsWith("-")) throw new Error(`Unknown option: ${arg}`);
     else ids.push(arg);
   }
-  return { ids, region, open, ui };
+  return { ids, region, open, ui, detach, fromFile };
 }
 
 async function main(): Promise<void> {
-  const { help, ids, region, open, ui } = parseArgs(process.argv.slice(2));
+  const { help, ids, region, open, ui, detach, fromFile } = parseArgs(process.argv.slice(2));
   if (help) {
     console.log(USAGE);
     return;
   }
+
+  // Internal: the detached opener child re-enters here with a handoff file
+  // holding an already-converted doc — load it into the browser and stay attached.
+  if (fromFile) {
+    const doc = JSON.parse(readFileSync(fromFile, "utf8")) as JaegerDoc;
+    try {
+      unlinkSync(fromFile);
+    } catch {
+      /* best effort */
+    }
+    await openInJaeger(ui ?? DEFAULT_UI, doc);
+    return;
+  }
+
   if (!ids.length) {
     console.error(USAGE);
     process.exit(2);
@@ -80,7 +110,12 @@ async function main(): Promise<void> {
 
   const doc = toJaegerDoc(traces);
   if (open) {
-    await openInJaeger(ui ?? DEFAULT_UI, doc);
+    if (detach) {
+      spawnDetachedOpener(ui ?? DEFAULT_UI, doc);
+      console.error("Opened the trace in a detached browser; this terminal is free.");
+    } else {
+      await openInJaeger(ui ?? DEFAULT_UI, doc);
+    }
   } else {
     process.stdout.write(JSON.stringify(doc, null, 2) + "\n");
   }
