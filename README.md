@@ -1,8 +1,8 @@
 # jaegerize-xray (`jxr`)
 
-Pull a trace out of **AWS X-Ray** by ID and print it as **Jaeger UI JSON** on stdout.
-Trace IDs can be copied straight from the Jaeger UI (32-char hex) or given in
-native X-Ray form — both are accepted.
+Pull a trace out of **AWS X-Ray** or **CloudWatch Transaction Search** by ID and
+print it as **Jaeger UI JSON** on stdout. Trace IDs can be copied straight from
+the Jaeger UI (32-char hex) or given in native X-Ray form — both are accepted.
 
 ## Install
 
@@ -77,6 +77,8 @@ jxr <id> --open --detach false
 | Flag | Meaning |
 |------|---------|
 | `--region <r>` | AWS region (default: `$AWS_REGION`, else your `~/.aws/config` profile region) |
+| `--legacy-mode [true\|false]` | Also query the deprecated X-Ray `BatchGetTraces` API before CloudWatch (default: `true`). See [CloudWatch Transaction Search](#cloudwatch-transaction-search) |
+| `--log-group <name>` | CloudWatch Transaction Search log group (default: `aws/spans`); implies `--legacy-mode false` |
 | `--open` | Open the trace in a browser via the Jaeger UI upload dropzone |
 | `--ui <url>` | Jaeger UI base URL (default: `https://demo.jaegertracing.io/jaeger`) |
 | `--detach [true\|false]` | With `--open`, free the terminal immediately (default: `true`) |
@@ -84,7 +86,30 @@ jxr <id> --open --detach false
 | `-h`, `--help` | Usage |
 
 Credentials/region resolve through the standard AWS chain (env vars, `~/.aws`,
-SSO, instance role) — if `aws xray ...` works for you, so does `jxr`.
+SSO, instance role) — if `aws xray ...` works for you, so does the legacy path.
+The CloudWatch path additionally needs `logs:FilterLogEvents` on the log group
+(see [CloudWatch Transaction Search](#cloudwatch-transaction-search) below).
+
+## CloudWatch Transaction Search
+
+Accounts that route tracing through **CloudWatch Transaction Search** send OTLP
+spans to the `aws/spans` log group instead of the legacy X-Ray store. Those
+traces are visible in the CloudWatch console but `xray:BatchGetTraces` (and so
+the X-Ray API) returns nothing for them.
+
+CloudWatch Transaction Search is the primary store. By default `jxr` still
+queries the **deprecated** X-Ray `BatchGetTraces` API first (legacy mode), then
+fills in any ID it lacked from `aws/spans`, converting the OTLP spans to the
+same Jaeger JSON. The CloudWatch path needs `logs:FilterLogEvents` on the log
+group. Flags:
+
+```bash
+jxr <id> --legacy-mode false    # skip X-Ray, read only CloudWatch (aws/spans)
+jxr <id> --log-group my/spans   # custom log group; implies --legacy-mode false
+```
+
+Legacy mode is on by default so nothing breaks for accounts still using the
+X-Ray store. Turn it off once everything you trace is in CloudWatch.
 
 ## How the ID conversion works
 
@@ -98,6 +123,13 @@ fault/error into Jaeger tags.
 By default all subsegments inherit their parent segment's service name (keeps
 the service graph readable). See the comment in `flatten()` to give each
 subsegment its own service node.
+
+OTLP spans from `aws/spans` are already plain hex IDs, so the conversion
+(`convertOtlpSpans`) maps `spanId`/`parentSpanId` straight onto Jaeger
+references, divides nanosecond timestamps to microseconds, and flattens span +
+resource attributes into tags (nested objects are JSON-stringified). Service
+name comes from `resource.attributes["service.name"]`, falling back to
+`aws.local.service`.
 
 ## Develop
 

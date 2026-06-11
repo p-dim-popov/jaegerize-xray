@@ -41,6 +41,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudwatch-logs": "^3.0.0",
     "@aws-sdk/client-xray": "^3.0.0"
   },
   "optionalDependencies": {
