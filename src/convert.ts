@@ -29,6 +29,24 @@ export interface XRayTrace {
   Segments?: Array<{ Document: string }>;
 }
 
+// ---------- OTLP shapes (CloudWatch Transaction Search `aws/spans`) ----------
+// Each log event is one flattened OTLP span. traceId/spanId are already plain
+// lowercase hex (no base64), so they map straight onto Jaeger IDs.
+
+export interface OtlpSpan {
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  name?: string;
+  kind?: string;
+  startTimeUnixNano?: number;
+  endTimeUnixNano?: number;
+  durationNano?: number;
+  attributes?: Record<string, unknown>;
+  status?: { code?: string; message?: string };
+  resource?: { attributes?: Record<string, unknown> };
+}
+
 // ---------- Jaeger shapes ----------
 
 export interface JaegerTag {
@@ -98,6 +116,10 @@ export function normalizeToXray(input: string): string {
 }
 
 export const toMicros = (epochSeconds: number): number => Math.round(Number(epochSeconds) * 1e6);
+
+// OTLP timestamps are integer nanoseconds. Divide to microseconds for Jaeger.
+// The micro value stays < 2^53 for any realistic time, so precision is safe.
+export const nanoToMicros = (nanos: number): number => Math.round(Number(nanos) / 1e3);
 
 // ---------- segment -> spans ----------
 
@@ -175,7 +197,96 @@ export function convertTrace(trace: XRayTrace): JaegerTraceData {
   return { traceID, spans, processes, warnings: null };
 }
 
-export function toJaegerDoc(traces: XRayTrace[]): JaegerDoc {
-  const data = traces.map(convertTrace);
+// ---------- OTLP spans -> Jaeger ----------
+
+// Flatten an OTLP attribute map into Jaeger tags. Scalars map by JS type;
+// nested objects/arrays (e.g. aws.xray) are JSON-stringified so nothing is lost.
+function attrsToTags(attrs: Record<string, unknown> | undefined): JaegerTag[] {
+  const tags: JaegerTag[] = [];
+  for (const [key, value] of Object.entries(attrs ?? {})) {
+    if (value == null) continue;
+    if (typeof value === "boolean") tags.push({ key, type: "bool", value });
+    else if (typeof value === "number")
+      tags.push(
+        Number.isInteger(value)
+          ? { key, type: "int64", value }
+          : { key, type: "string", value: String(value) }
+      );
+    else if (typeof value === "string") tags.push({ key, type: "string", value });
+    else tags.push({ key, type: "string", value: JSON.stringify(value) });
+  }
+  return tags;
+}
+
+// OTLP "SPAN_KIND_SERVER"/"SERVER"/"INTERNAL" -> Jaeger "server"/"internal".
+function normalizeKind(kind: string | undefined): string | undefined {
+  if (!kind) return undefined;
+  return kind.replace(/^SPAN_KIND_/i, "").toLowerCase();
+}
+
+function otlpSpanServiceName(span: OtlpSpan): string {
+  const res = span.resource?.attributes ?? {};
+  const attr = span.attributes ?? {};
+  return (
+    (res["service.name"] as string) ||
+    (attr["aws.local.service"] as string) ||
+    "unknown"
+  );
+}
+
+export function convertOtlpSpans(otlpSpans: OtlpSpan[]): JaegerTraceData {
+  const traceID = xrayTraceIdToJaeger(otlpSpans[0]?.traceId ?? "");
+  const spans: JaegerSpan[] = [];
+  const processes: Record<string, JaegerProcess> = {};
+
+  for (const s of otlpSpans) {
+    const serviceName = otlpSpanServiceName(s);
+    const processID = "p_" + serviceName;
+    if (!processes[processID])
+      processes[processID] = { serviceName, tags: attrsToTags(s.resource?.attributes) };
+
+    const startTime = s.startTimeUnixNano != null ? nanoToMicros(s.startTimeUnixNano) : 0;
+    const duration =
+      s.durationNano != null
+        ? nanoToMicros(s.durationNano)
+        : s.startTimeUnixNano != null && s.endTimeUnixNano != null
+          ? nanoToMicros(s.endTimeUnixNano) - startTime
+          : 0;
+
+    const tags = attrsToTags(s.attributes);
+    const kind = normalizeKind(s.kind);
+    if (kind) tags.push({ key: "span.kind", type: "string", value: kind });
+    if (s.status?.code === "ERROR") {
+      tags.push({ key: "error", type: "bool", value: true });
+      if (s.status.message)
+        tags.push({ key: "otel.status_description", type: "string", value: s.status.message });
+    }
+
+    spans.push({
+      traceID,
+      spanID: s.spanId,
+      operationName: s.name || "unknown",
+      references: s.parentSpanId
+        ? [{ refType: "CHILD_OF", traceID, spanID: s.parentSpanId }]
+        : [],
+      startTime,
+      duration: Math.max(duration, 0),
+      tags,
+      logs: [],
+      processID,
+      warnings: null,
+    });
+  }
+
+  return { traceID, spans, processes, warnings: null };
+}
+
+// ---------- envelope ----------
+
+export function assembleDoc(data: JaegerTraceData[]): JaegerDoc {
   return { data, total: data.length, limit: 0, offset: 0, errors: null };
+}
+
+export function toJaegerDoc(traces: XRayTrace[]): JaegerDoc {
+  return assembleDoc(traces.map(convertTrace));
 }
